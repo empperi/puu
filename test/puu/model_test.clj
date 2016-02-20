@@ -141,7 +141,7 @@
           fut  (wait mgr1 "waiting-1")]
       (is (= false (realized? fut)))
       (do-tx mgr1 #(update % :a conj 2))
-      (is (= {:a [1 2]} @(or (deref fut 1000 nil) (atom nil))))))
+      (is (= {:a [1 2]} @(deref fut 5000 (atom nil))))))
 
   (testing "Several waiting futures"
     (let [mgr1 (manager "mgr-1" (model {:a [1]}))
@@ -152,4 +152,4 @@
       (is (= true (every? (complement realized?) futs)))
       (do-tx mgr1 #(update % :a conj 2))
       (doseq [fut futs]
-        (is (= {:a [1 2]} @(or (deref fut 1000 nil) (atom nil))))))))
+        (is (= {:a [1 2]} @(deref fut 5000 (atom nil))))))))
