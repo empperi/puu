@@ -134,3 +134,22 @@
         (do-tx mgr1 #(assoc-in % [:b] {:c [4 5 6]}))
         (do-tx mgr1 #(update-in % [:b :c] conj 7))
         (do-tx mgr1 #(update-in % [:b] (fn [m] (dissoc m :c))))))))
+
+(deftest manager-changes-can-be-waited
+  (testing "Single waiting future"
+    (let [mgr1 (manager "mgr-1" (model {:a [1]}))
+          fut  (wait mgr1 "waiting-1")]
+      (is (= false (realized? fut)))
+      (do-tx mgr1 #(update % :a conj 2))
+      (is (= {:a [1 2]} @(deref fut 300 nil)))))
+
+  (testing "Several waiting futures"
+    (let [mgr1 (manager "mgr-1" (model {:a [1]}))
+          futs  [(wait mgr1 "waiting-1")
+                 (wait mgr1 "waiting-2")
+                 (wait mgr1 "waiting-3")]]
+
+      (is (= true (every? (complement realized?) futs)))
+      (do-tx mgr1 #(update % :a conj 2))
+      (doseq [fut futs]
+        (is (= {:a [1 2]} @(deref fut 300 nil)))))))

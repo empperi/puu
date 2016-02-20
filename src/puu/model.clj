@@ -2,7 +2,8 @@
   (:require [clojure.data :as d]
             [clojure.set :as sets])
   (:import (clojure.lang Ref IDeref IFn Keyword)
-           (java.lang.ref SoftReference)))
+           (java.lang.ref SoftReference)
+           (java.util.concurrent LinkedTransferQueue)))
 
 (defprotocol Version
   (version [_])
@@ -20,18 +21,65 @@
   (previous [_])
   (ref-access [_])
   (model-value [_])
-  (mgr-name [_]))
+  (mgr-name [_])
+  (tx-wait [_ wait-queue-name])
+  (tx-deliver [_ m]))
 
-(deftype Manager [mgr-name ^Ref d]
+(deftype Manager [mgr-name ^Ref d tx-queues]
   IDeref IManager
   (deref [_] @@d)
   (model-value [_] @d)
   (ref-access [_] d)
   (mgr-name [_] mgr-name)
-  (previous [_] (Manager. mgr-name (ref (prev @d)))))
+  (previous [_] (Manager. mgr-name (ref (prev @d)) (ref {})))
+  (tx-wait [_ wait-queue-name]
+    (letfn [(get-queue []
+              (dosync
+                (let [queue (or (get @tx-queues wait-queue-name)
+                                (get (alter tx-queues assoc-in [wait-queue-name] {:timestamp (System/currentTimeMillis)
+                                                                                  :queue     (LinkedTransferQueue.)})
+                                     wait-queue-name))]
+                  (alter tx-queues assoc-in [wait-queue-name :timestamp] (System/currentTimeMillis))
+                  (:queue queue))))]
+      ; we really don't want to block inside a transaction...
+      (.take (get-queue))))
+  (tx-deliver [_ m]
+    (dosync
+      (doseq [[q-name queue] @tx-queues]
+        (when (.hasWaitingConsumer (:queue queue))
+          (.put (:queue queue) m)
+          (alter tx-queues assoc-in [q-name :timestamp] (System/currentTimeMillis)))
+        ; remove over 1 second old queues with no activity
+        (when (< 1000 (- (System/currentTimeMillis) (:timestamp queue)))
+          (alter tx-queues dissoc q-name))))))
 
 (defn- new-version [^PuuModel m data]
   (PuuModel. (inc (version m)) (System/currentTimeMillis) data (SoftReference. m)))
+
+(defn- seqzip
+  "returns a sequence of [[ value-left] [value-right]....]  padding with nulls for shorter sequences "
+  [left right]
+  (loop [list [] a left b right]
+    (if (or (seq a) (seq b))
+      (recur (conj list [(first a) (first b)] ) (rest a) (rest b))
+      list)))
+
+(defn- recursive-diff-merge
+  " Merge two structures recusively , taking non-nil values from sequences and maps and merging sets"
+  [part-state original-state]
+  (cond
+    (sequential? part-state) (map (fn [[l r]] (recursive-diff-merge l r)) (seqzip part-state original-state))
+    (map? part-state) (merge-with recursive-diff-merge part-state original-state)
+    (set? part-state) (sets/union part-state original-state)
+    (nil? part-state ) original-state
+    :default part-state))
+
+(defn- undiff
+  "returns the state of x after reversing the changes described by a diff against
+   an earlier state (where before and after are the first two elements of the diff)"
+  [x before after]
+  (let [[a _ _] (d/diff x after)]
+    (recursive-diff-merge a before)))
 
 (defn model [m]
   (PuuModel. 1 (System/currentTimeMillis) m nil))
@@ -42,14 +90,16 @@
    :timestamp (timestamp m)})
 
 (defn manager [mgr-name ^PuuModel m]
-  (Manager. mgr-name (ref m :min-history 5 :max-history 100)))
+  (Manager. mgr-name (ref m :min-history 5 :max-history 100) (ref {})))
 
 (defn do-tx [^Manager m f]
   (dosync
     (alter
       (ref-access m)
       (fn [data]
-        (new-version data (f @data))))))
+        (let [v (new-version data (f @data))]
+          (tx-deliver m v)
+          v)))))
 
 (defn get-version-by-num [mgr version-num]
   (if-let [cur-version (model-value mgr)]
@@ -88,34 +138,12 @@
      :changes {:additions    (second diff)
                :subtractions (first diff)}}))
 
-(defn- seqzip
-  "returns a sequence of [[ value-left] [value-right]....]  padding with nulls for shorter sequences "
-  [left right]
-  (loop [list [] a left b right]
-    (if (or (seq a) (seq b))
-      (recur (conj list [(first a) (first b)] ) (rest a) (rest b))
-      list)))
-
-(defn- recursive-diff-merge
-  " Merge two structures recusively , taking non-nil values from sequences and maps and merging sets"
-  [part-state original-state]
-  (cond
-    (sequential? part-state) (map (fn [[l r]] (recursive-diff-merge l r)) (seqzip part-state original-state))
-    (map? part-state) (merge-with recursive-diff-merge part-state original-state)
-    (set? part-state) (sets/union part-state original-state)
-    (nil? part-state ) original-state
-    :default part-state))
-
-(defn undiff
-  "returns the state of x after reversing the changes described by a diff against
-   an earlier state (where before and after are the first two elements of the diff)"
-  [x before after]
-  (let [[a _ _] (d/diff x after)]
-    (recursive-diff-merge a before)))
-
-
 (defn apply-changeset [mgr diff]
   (do-tx
     mgr
     (fn [data]
       (undiff data (-> diff :changes :additions) (-> diff :changes :subtractions)))))
+
+(defn wait [mgr wait-queue-name]
+  (future
+    (tx-wait mgr wait-queue-name)))
