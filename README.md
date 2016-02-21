@@ -1,5 +1,7 @@
 # Puu
 
+[![Build Status](https://drone.io/bitbucket.org/niklas_collin/puu/status.png)](https://drone.io/bitbucket.org/niklas_collin/puu/latest)
+
 **Puu** is a Clojure library for managing versioned application state. It is a glorified `ref` by using the Clojure STM
 under the hood and storing everything in a single `ref` per created `manager`. The way **Puu** differs from
 traditional Clojure is that it gives you:
