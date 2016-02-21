@@ -33,30 +33,32 @@
     (is (= nil @(get-version mgr inc)))))
 
 (deftest manager-handles-concurrent-updates-correctly
-  (let [pool       (Executors/newFixedThreadPool 20)
+  (let [tasks-n    10
+        task-times 10
+        execs      (* tasks-n task-times)
+        pool       (Executors/newFixedThreadPool 20)
         mgr        (manager "mgr-1" (model {:value 0}))
         tx-counter (atom 0)
         tasks      (map (fn [n]
                           (fn []
-                            (dotimes [x 100]
+                            (dotimes [x task-times]
                               (do-tx mgr (fn [data]
                                            (swap! tx-counter inc)
                                            (update data :value inc))))))
-                        (range 100))]
+                        (range tasks-n))]
     (doseq [fut (.invokeAll pool tasks)]
       (.get fut))
     (.shutdown pool)
 
-    ; there should have happened 100*100 additions by one to the :value
-    (is (= {:value (* 100 100)} @mgr))
-    ; operation should have caused exactly 100*100 versions to be created
-    (is (= (inc (* 100 100)) (version (model-value mgr))))
+    ; there should have happened 'execs' additions by one to the :value
+    (is (= {:value execs} @mgr))
+    ; operation should have caused exactly 'execs' versions to be created
+    (is (= (inc execs) (version (model-value mgr))))
     ; tx-counter should be a LOT higher number than version number since this test causes a lot of
     ; transaction collisions with extremely high contestion
     (is (> @tx-counter (version (model-value mgr))))
-    ; history is intact for the latest 100 versions (checking them all would take a lot of time and
-    ; doesn't really add to the test)
-    (doseq [v (range (- (* 100 100) 100) (* 100 100))]
+    ; history is intact for the latest 20 versions
+    (doseq [v (range (- execs 20) execs)]
       (is (= {:value (dec v)} @(get-version mgr v))))))
 
 (deftest map-format-of-model-contains-model-metadata-values
@@ -141,7 +143,7 @@
           fut  (wait mgr1 "waiting-1")]
       (is (= false (realized? fut)))
       (do-tx mgr1 #(update % :a conj 2))
-      (is (= {:a [1 2]} @(deref fut 5000 (atom nil))))))
+      (is (= {:a [1 2]} @(deref fut 500 (atom nil))))))
 
   (testing "Several waiting futures"
     (let [mgr1 (manager "mgr-1" (model {:a [1]}))
@@ -152,4 +154,4 @@
       (is (= true (every? (complement realized?) futs)))
       (do-tx mgr1 #(update % :a conj 2))
       (doseq [fut futs]
-        (is (= {:a [1 2]} @(deref fut 5000 (atom nil))))))))
+        (is (= {:a [1 2]} @(deref fut 500 (atom nil))))))))
