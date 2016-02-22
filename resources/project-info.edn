@@ -1,1 +1,1 @@
-{:project collin/puu, :version {:major 0, :minor 1, :hotfix 0, :snapshot true}, :description "Library for managing versioned state and distributed changesets"}
+{:project collin/puu, :version {:major 0, :minor 1, :hotfix 0, :snapshot false}, :description "Library for managing versioned state and distributed changesets"}
