@@ -141,17 +141,20 @@
   (testing "Single waiting future"
     (let [mgr1 (manager "mgr-1" (model {:a [1]}))
           fut  (wait mgr1 "waiting-1")]
+      ; give wait future some time to do it's magic
+      (Thread/sleep 50)
       (is (= false (realized? fut)))
       (do-tx mgr1 #(update % :a conj 2))
-      (is (= {:a [1 2]} @(deref fut 500 (atom nil))))))
+      (is (= {:a [1 2]} @(deref fut 500 (atom "timeout"))))))
 
   (testing "Several waiting futures"
     (let [mgr1 (manager "mgr-1" (model {:a [1]}))
           futs  [(wait mgr1 "waiting-1")
                  (wait mgr1 "waiting-2")
                  (wait mgr1 "waiting-3")]]
-
+      ; give wait futures some time to do it's magic
+      (Thread/sleep 50)
       (is (= true (every? (complement realized?) futs)))
       (do-tx mgr1 #(update % :a conj 2))
       (doseq [fut futs]
-        (is (= {:a [1 2]} @(deref fut 500 (atom nil))))))))
+        (is (= {:a [1 2]} @(deref fut 500 (atom "timeout"))))))))
