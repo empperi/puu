@@ -79,12 +79,23 @@
           (spit (clojure.java.io/file project-info-path) (assoc-in proj [:version] final-v))))
       (next-handler fileset))))
 
-(deftask release
+(deftask snapshot
+  "Creates a new snapshot version promotion."
   [m major bool "Major version (x in x.y.z)"
    i minor bool "Minor version (y in x.y.z)"
-   f hotfix bool "Hotfix version (z in x.y.z)"
-   s snapshot bool "Should promotion be a snapshot version?"]
-  (comp (test)
-        (apply promote (flatten (seq *opts*)))
-        (lein-generate)
-        (artifact)))
+   f hotfix bool "Hotfix version (z in x.y.z)"]
+  (comp (apply promote (flatten (seq (assoc *opts* :snapshot true))))
+        (lein-generate)))
+
+(deftask release
+  "Executes tests, promotes the current snapshot version to non-snapshot. Then updates project.clj and builds a release
+   artifact.
+
+   Fails if the current version is not a snapshot when executed."
+  []
+  (if (false? (:snapshot (:version (project))))
+    (boot.util/fail "Current version is not a -SNAPSHOT version, cannot release.\n")
+    (comp (test)
+          (promote :snapshot false)
+          (lein-generate)
+          (artifact))))
