@@ -4,5 +4,6 @@
   "0.2.0-SNAPSHOT"
   :dependencies
   [[org.clojure/clojure "1.8.0"]
+   [org.clojure/core.async "0.2.374"]
    [adzerk/boot-test "1.1.0" :scope "test"]
    [instaparse "1.4.1" :scope "test"]])

@@ -1,6 +1,7 @@
 (ns puu.model-test
   (:require [clojure.test :refer :all]
-            [puu.model :refer :all])
+            [puu.model :refer :all]
+            [clojure.core.async :refer [chan <!!]])
   (:import (java.util.concurrent Executors)))
 
 
@@ -96,7 +97,7 @@
 (deftest applying-changeset-gives-identical-model-data-for-other-manager-with-same-base-model
   (testing "Simple new key"
     (two-managers-test {:a 1}
-      (fn [mgr1 _] (do-tx mgr1 #(assoc % :b 2)))))
+                       (fn [mgr1 _] (do-tx mgr1 #(assoc % :b 2)))))
 
   (testing "Simple key value replacement"
     (two-managers-test
@@ -138,23 +139,19 @@
         (do-tx mgr1 #(update-in % [:b] (fn [m] (dissoc m :c))))))))
 
 (deftest manager-changes-can-be-waited
-  (testing "Single waiting future"
-    (let [mgr1 (manager "mgr-1" (model {:a [1]}))
-          fut  (wait mgr1 "waiting-1")]
+  (testing "Single subscribed channel"
+    (let [mgr1    (manager "mgr-1" (model {:a [1]}))
+          in-chan (subscribe mgr1 (chan))]
       ; give wait future some time to do it's magic
-      (Thread/sleep 50)
-      (is (= false (realized? fut)))
       (do-tx mgr1 #(update % :a conj 2))
-      (is (= {:a [1 2]} @(deref fut 500 (atom "timeout"))))))
+      (is (= {:a [1 2]} @(<!! in-chan)))))
 
-  (testing "Several waiting futures"
-    (let [mgr1 (manager "mgr-1" (model {:a [1]}))
-          futs  [(wait mgr1 "waiting-1")
-                 (wait mgr1 "waiting-2")
-                 (wait mgr1 "waiting-3")]]
+  (testing "Several subscribed channels"
+    (let [mgr1  (manager "mgr-1" (model {:a [1]}))
+          chans [(subscribe mgr1 (chan))
+                 (subscribe mgr1 (chan))
+                 (subscribe mgr1 (chan))]]
       ; give wait futures some time to do it's magic
-      (Thread/sleep 50)
-      (is (= true (every? (complement realized?) futs)))
       (do-tx mgr1 #(update % :a conj 2))
-      (doseq [fut futs]
-        (is (= {:a [1 2]} @(deref fut 500 (atom "timeout"))))))))
+      (doseq [c chans]
+        (is (= {:a [1 2]} @(<!! c)))))))
