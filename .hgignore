@@ -13,4 +13,6 @@ pom.xml.asc
 .idea/**
 .lein-failures
 .nrepl-port
+.lein-repl-history
+.nrepl-history
 *.iml

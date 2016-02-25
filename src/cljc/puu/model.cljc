@@ -1,21 +1,33 @@
 (ns puu.model
   (:require [clojure.data :as d]
             [clojure.set :as sets]
-            [clojure.core.async :refer [>! <! >!! <!! go chan mult tap untap sliding-buffer]])
-  (:import (clojure.lang Ref IDeref IFn Keyword)
-           (java.lang.ref SoftReference)))
+            #?(:clj [clojure.core.async :refer [>! <! >!! <!! go chan mult tap untap sliding-buffer]])
+            #?(:cljs [cljs.core.async :refer [>! <! chan mult tap untap sliding-buffer]])
+            #?(:cljs [cljs.core :refer [IDeref IFn Keyword]]))
+  (:import #?(:clj (clojure.lang IDeref IFn Keyword))
+           #?(:clj (java.lang.ref SoftReference)))
+  #?(:cljs (:require-macros [cljs.core.async.macros :refer [go]])))
+
+(defn- time-millis []
+  #?(:clj (System/currentTimeMillis)
+     :cljs (.getTime (js/Date.))))
 
 (defprotocol Version
   (version [_])
   (timestamp [_])
   (prev [_]))
 
-(deftype PuuModel [ver ts data ^SoftReference prev]
-  IDeref Version
-  (deref [_] data)
+(deftype PuuModel [ver ts data prev]
+  IDeref
+  #?(:clj (deref [_] data)
+     :cljs (-deref [_] data))
+
+  Version
   (version [_] ver)
   (timestamp [_] ts)
-  (prev [_] (when (some? prev) (.get prev))))
+  (prev [_] (when (some? prev)
+              #?(:clj (.get prev)
+                 :cljs prev))))
 
 (defprotocol IManager
   (previous [_])
@@ -26,14 +38,21 @@
   (unsubscribe [_ c])
   (publish [_ m]))
 
-(deftype Manager [mgr-name ^Ref d in-chan mult-chan]
-  IDeref IManager
-  (deref [_] @@d)
+(deftype Manager [mgr-name d in-chan mult-chan]
+  IDeref
+  #?(:clj (deref [_] @@d)
+     :cljs (-deref [_] @@d))
+
+  IManager
   (model-value [_] @d)
   (ref-access [_] d)
   (mgr-name [_] mgr-name)
   (previous [_] (let [in (chan (sliding-buffer 50))]
-                  (Manager. mgr-name (ref (prev @d)) in (mult in))))
+                  (Manager. mgr-name
+                            #?(:clj (ref (prev @d))
+                               :cljs (atom (prev @d)))
+                            in
+                            (mult in))))
   (subscribe [_ c]
     (tap mult-chan c))
   (unsubscribe [_ c]
@@ -43,7 +62,9 @@
       (go (>! in-chan m)))))
 
 (defn- new-version [^PuuModel m data]
-  (PuuModel. (inc (version m)) (System/currentTimeMillis) data (SoftReference. m)))
+  (PuuModel. (inc (version m)) (time-millis) data
+             #?(:clj (SoftReference. m)
+                :cljs m)))
 
 (defn- seqzip
   "returns a sequence of [[ value-left] [value-right]....]  padding with nulls for shorter sequences "
@@ -71,7 +92,7 @@
     (recursive-diff-merge a before)))
 
 (defn model [m]
-  (PuuModel. 1 (System/currentTimeMillis) m nil))
+  (PuuModel. 1 (time-millis) m nil))
 
 (defn model->map [^PuuModel m]
   {:data      @m
@@ -80,16 +101,26 @@
 
 (defn manager [mgr-name ^PuuModel m]
   (let [in-chan (chan (sliding-buffer 50))]
-    (Manager. mgr-name (ref m :min-history 5 :max-history 100) in-chan (mult in-chan))))
+    (Manager. mgr-name
+              #?(:clj (ref m :min-history 5 :max-history 100)
+                 :cljs (atom m))
+              in-chan
+              (mult in-chan))))
 
 (defn do-tx [^Manager m f]
-  (dosync
-    (alter
-      (ref-access m)
-      (fn [data]
-        (let [v (new-version data (f @data))]
-          (publish m v)
-          v)))))
+  #?(:clj (dosync
+            (alter
+              (ref-access m)
+              (fn [data]
+                (let [v (new-version data (f @data))]
+                  (publish m v)
+                  v))))
+     :cljs (swap!
+             (ref-access m)
+             (fn [data]
+               (let [v (new-version data (f @data))]
+                  (publish m v)
+                  v)))))
 
 (defn get-version-by-num [mgr version-num]
   (if-let [cur-version (model-value mgr)]
@@ -103,7 +134,7 @@
 (defmethod get-version IFn [mgr version-delta]
   (get-version-by-num mgr (version-delta (version (model-value mgr)))))
 
-(defmethod get-version Number [mgr version-delta]
+(defmethod get-version #?(:clj Number :cljs js/Number) [mgr version-delta]
   (get-version-by-num mgr version-delta))
 
 (defmethod get-version Keyword [mgr version-delta]
@@ -116,7 +147,7 @@
 
 (defmethod get-version :default [mgr version-delta]
   (throw (ex-info
-           (format "Unknown version-delta type: %s" (type version-delta))
+           (str "Unknown version-delta type: " (type version-delta))
            {:type (type version-delta)})))
 
 (defn version-changes [mgr from to]
