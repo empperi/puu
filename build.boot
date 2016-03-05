@@ -1,6 +1,6 @@
 (set-env!
   :source-paths   #{"src/clj" "src/cljc" "src/cljs"}
-  :test-paths     #{"test/clj" "test/cljs"}
+  :test-paths     #{"test/clj" "test/cljc" "test/cljs"}
   :resource-paths #{"resources"}
   :dependencies '[[org.clojure/clojure "1.8.0"]
                   [org.clojure/clojurescript "1.7.228"]
@@ -32,7 +32,8 @@
 
 (task-options!
   aot {:namespace #{'puu.model}}
-  cljs {:source-map true})
+  cljs {:source-map true}
+  test-cljs {:js-env :phantom})
 
 (defn- generate-lein-project-file! [& {:keys [keep-project] :or {:keep-project true}}]
   (let [pfile (clojure.java.io/file "project.clj")
@@ -59,13 +60,18 @@
     (fn [fileset]
       (((apply pom (flatten (seq (update (project) :version project-version->str)))) next-handler) fileset))))
 
+(deftask cljs-test
+  []
+  (set-env! :source-paths (apply conj (get-env :source-paths) (get-env :test-paths)))
+  (test-cljs :namespaces #{"puu.model-test"}))
+
 (deftask test
   "Wraps adzerk.boot-test/test since it provides no way to set test-paths separately from source-paths
    except by setting it manually just before executing the tests."
   []
   (comp
     (t/test (set-env! :source-paths (apply conj (get-env :source-paths) (get-env :test-paths))))
-    (test-cljs :namespaces #{"puu.model-test"})))
+    (cljs-test)))
 
 (deftask package []
   "Builds an application artifact for the current version (no promotions)."

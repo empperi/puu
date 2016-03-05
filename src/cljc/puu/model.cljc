@@ -129,26 +129,14 @@
       (recur (previous mgr) version-num))
     (atom nil)))
 
-(defmulti get-version (fn [mgr version-delta] (type version-delta)))
-
-(defmethod get-version IFn [mgr version-delta]
-  (get-version-by-num mgr (version-delta (version (model-value mgr)))))
-
-(defmethod get-version #?(:clj Number :cljs js/Number) [mgr version-delta]
-  (get-version-by-num mgr version-delta))
-
-(defmethod get-version Keyword [mgr version-delta]
-  (condp = version-delta
-    :latest (model-value mgr)
-    :first nil
-    nil))
-
-(defmethod get-version nil [_ _] nil)
-
-(defmethod get-version :default [mgr version-delta]
-  (throw (ex-info
-           (str "Unknown version-delta type: " (type version-delta))
-           {:type (type version-delta)})))
+(defn get-version [mgr version-delta]
+  (cond
+    (number? version-delta) (get-version-by-num mgr version-delta)
+    (fn? version-delta) (get-version-by-num mgr (version-delta (version (model-value mgr))))
+    (= :latest version-delta) (model-value mgr)
+    :default (ex-info
+               (str "Unknown version-delta type: " (type version-delta))
+               {:type (type version-delta)})))
 
 (defn version-changes [mgr from to]
   (let [from-v (get-version mgr from)
