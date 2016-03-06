@@ -36,6 +36,21 @@
     (is (= nil @(puu/get-version mgr #(- % 4))))
     (is (= nil @(puu/get-version mgr inc)))))
 
+(deftest manager-retains-only-limited-versions-when-limit-defined
+  (let [m (puu/model {:value [1]})
+        mgr (puu/manager "mgr-1" m :limit 3)]
+    (puu/do-tx mgr #(update % :value conj 2))
+    (puu/do-tx mgr #(update % :value conj 3))
+    (puu/do-tx mgr #(update % :value conj 4))
+
+    (is (= [1 2 3 4] (:value @(puu/get-version mgr :latest))))
+    (is (= [1 2 3] (:value @(puu/get-version mgr dec))))
+    (is (= [1 2 3] (:value @(puu/get-version mgr 3))))
+    (is (= [1 2] (:value @(puu/get-version mgr #(- % 2)))))
+    (is (= [1 2] (:value @(puu/get-version mgr 2))))
+    ; first version should have dropped due to limit
+    (is (= nil @(puu/get-version mgr 1)))))
+
 #?(:clj
    (deftest manager-handles-concurrent-updates-correctly
      (let [tasks-n    10
