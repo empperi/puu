@@ -1,9 +1,12 @@
 (ns puu.model-test
   (:require [puu.model :as puu]
             [puu.async-util :refer [test-async test-within]]
-            [cljs.core.async :refer [<! chan]]
-            [cljs.test :refer-macros [deftest is testing run-tests]])
-  (:require-macros [cljs.core.async.macros :refer [go]]))
+            #?(:clj [clojure.core.async :refer [<! chan go]])
+            #?(:cljs [cljs.core.async :refer [<! chan]])
+            #?(:clj [clojure.test :refer :all])
+            #?(:cljs [cljs.test :refer-macros [deftest is testing run-tests]]))
+  #?(:cljs (:require-macros [cljs.core.async.macros :refer [go]]))
+  #?(:clj (:import (java.util.concurrent Executors))))
 
 (deftest manager-updates-its-model-and-its-versions
   (let [mgr (puu/manager "mgr-1" (puu/model {}))]
@@ -32,6 +35,36 @@
     (is (= [1] (:value @(puu/get-version mgr 1))))
     (is (= nil @(puu/get-version mgr #(- % 4))))
     (is (= nil @(puu/get-version mgr inc)))))
+
+#?(:clj
+   (deftest manager-handles-concurrent-updates-correctly
+     (let [tasks-n    10
+           task-times 10
+           execs      (* tasks-n task-times)
+           pool       (Executors/newFixedThreadPool 20)
+           mgr        (puu/manager "mgr-1" (puu/model {:value 0}))
+           tx-counter (atom 0)
+           tasks      (map (fn [n]
+                             (fn []
+                               (dotimes [x task-times]
+                                 (puu/do-tx mgr (fn [data]
+                                                  (swap! tx-counter inc)
+                                                  (update data :value inc))))))
+                           (range tasks-n))]
+       (doseq [fut (.invokeAll pool tasks)]
+         (.get fut))
+       (.shutdown pool)
+
+       ; there should have happened 'execs' additions by one to the :value
+       (is (= {:value execs} @mgr))
+       ; operation should have caused exactly 'execs' versions to be created
+       (is (= (inc execs) (puu/version (puu/model-value mgr))))
+       ; tx-counter should be a LOT higher number than version number since this test causes a lot of
+       ; transaction collisions with extremely high contestion
+       (is (> @tx-counter (puu/version (puu/model-value mgr))))
+       ; history is intact for the latest 20 versions
+       (doseq [v (range (- execs 20) execs)]
+         (is (= {:value (dec v)} @(puu/get-version mgr v)))))))
 
 (deftest map-format-of-model-contains-model-metadata-values
   (let [m (puu/model {:value [1 2]})]
@@ -115,18 +148,18 @@
           in-chan (puu/subscribe mgr1 (chan))]
       (test-async
         (test-within 1000
-          (go
-            (puu/do-tx mgr1 #(update % :a conj 2))
-            (is (= {:a [1 2]} @(<! in-chan))))))))
+                     (go
+                       (puu/do-tx mgr1 #(update % :a conj 2))
+                       (is (= {:a [1 2]} @(<! in-chan))))))))
 
   (testing "Several subscribed channels"
     (let [mgr1  (puu/manager "mgr-1" (puu/model {:a [1]}))
           chans [(puu/subscribe mgr1 (chan))
                  (puu/subscribe mgr1 (chan))
                  (puu/subscribe mgr1 (chan))]]
-         (test-async
-           (test-within 1000
-             (go
-               (puu/do-tx mgr1 #(update % :a conj 2))
-               (doseq [c chans]
-                 (is (= {:a [1 2]} @(<! c))))))))))
+      (test-async
+        (test-within 1000
+                     (go
+                       (puu/do-tx mgr1 #(update % :a conj 2))
+                       (doseq [c chans]
+                         (is (= {:a [1 2]} @(<! c))))))))))
