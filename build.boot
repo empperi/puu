@@ -19,7 +19,7 @@
   '[instaparse.core :as insta]
   '[clojure.edn :as edn]
   '[crisptrutski.boot-cljs-test :refer [test-cljs prep-cljs-tests run-cljs-tests]]
-  '[adzerk.boot-cljs      :refer [cljs]])
+  '[adzerk.boot-cljs :refer [cljs]])
 
 (def project-info-path "./resources/project-info.edn")
 (defn project [] (edn/read-string (slurp project-info-path)))
@@ -74,13 +74,25 @@
     (t/test (set-env! :source-paths (apply conj (get-env :source-paths) (get-env :test-paths))))
     (cljs-test)))
 
-(deftask package []
+(deftask package
   "Builds an application artifact for the current version (no promotions)."
   []
   (comp (puu-pom)
         (aot)
-        (jar :file "puu.jar")
+        (jar :file (let [{v :version} (project)]
+                     (format "puu-%s.%s.%s%s.jar"
+                             (:major v)
+                             (:minor v)
+                             (:hotfix v)
+                             (if (:snapshot v) "-SNAPSHOT" ""))))
         (target)))
+
+(deftask build
+  "Runs tests, creates a package and installs it into local M2 repository."
+  []
+  (comp (test)
+        (package)
+        (built-in/install)))
 
 (deftask promote
   "Promotes version"
@@ -127,3 +139,10 @@
           (lein-generate)
           (cljs :optimizations :advanced)
           (package))))
+
+(deftask dev
+  "Starts a watcher for tests and launches nrepl."
+  []
+  (comp (repl)
+        (watch)
+        (test)))
