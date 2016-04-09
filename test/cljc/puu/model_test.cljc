@@ -174,7 +174,19 @@
                  (puu/subscribe mgr1 (chan))]]
       (test-async
         (test-within 1000
-                     (go
-                       (puu/do-tx mgr1 #(update % :a conj 2))
-                       (doseq [c chans]
-                         (is (= {:a [1 2]} @(<! c))))))))))
+          (go
+            (puu/do-tx mgr1 #(update % :a conj 2))
+            (doseq [c chans]
+              (is (= {:a [1 2]} @(<! c)))))))))
+
+  (testing "Same subscription works for several changes"
+    (let [mgr1 (puu/manager "mgr-1" (puu/model {:a [1]}))
+          subs (puu/subscribe mgr1 (chan))]
+      (test-async
+        (test-within 1000
+          (go
+            (puu/do-tx mgr1 #(update % :a conj 2))
+            (is (= {:a [1 2]} @(<! subs)))
+
+            (puu/do-tx mgr1 #(update % :a conj 3))
+            (is (= {:a [1 2 3]} @(<! subs)))))))))
