@@ -74,11 +74,16 @@
     (t/test (set-env! :source-paths (apply conj (get-env :source-paths) (get-env :test-paths))))
     (cljs-test)))
 
+(deftask include-sources
+  ""
+  []
+  (built-in/sift :add-resource #{"./src/cljc"}))
+
 (deftask package
   "Builds an application artifact for the current version (no promotions)."
   []
   (comp (puu-pom)
-        (aot)
+        (include-sources)
         (jar :file (let [{v :version} (project)]
                      (format "puu-%s.%s.%s%s.jar"
                              (:major v)
@@ -137,7 +142,6 @@
     (comp (test)
           (promote :snapshot false)
           (lein-generate)
-          (cljs :optimizations :advanced)
           (package))))
 
 (deftask dev
